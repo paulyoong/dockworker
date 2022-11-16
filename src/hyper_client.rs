@@ -35,14 +35,14 @@ impl Client {
 pub struct Response {
     pub status: StatusCode,
     buf: Vec<u8>,
-    rx: futures::channel::mpsc::UnboundedReceiver<hyper::body::Bytes>,
+    rx: futures::channel::mpsc::Receiver<hyper::body::Bytes>,
     handle: std::thread::JoinHandle<()>,
 }
 
 impl Response {
     pub fn new(mut res: http::Response<hyper::Body>) -> Response {
         let status = res.status();
-        let (tx, rx) = futures::channel::mpsc::unbounded();
+        let (mut tx, rx) =  futures::channel::mpsc::channel(1);
 
         let handle = std::thread::spawn(move || {
             let mut tokio_runtime = tokio::runtime::Builder::new()
@@ -51,14 +51,27 @@ impl Response {
                 .build()
                 .unwrap();
 
-            let future = res.body_mut().try_for_each(move |chunk| {
-                if !tx.is_closed() {
-                    tx.unbounded_send(chunk).unwrap();
+            let mut body = res.body_mut();
+            tokio_runtime.block_on(async move {
+                loop {
+                    let t = body.next().await;
+                    match t {
+                        None => {break}
+                        Some(res) => {
+                            tx.send(res.unwrap()).await.unwrap();
+                        }
+                    }
                 }
-                futures::future::ok(())
             });
 
-            tokio_runtime.block_on(future).unwrap();
+            // let future = res.body_mut().for_each(|chunk| async move {
+            //     if !tx.is_closed() {
+            //         tx.send(chunk).await.unwrap();
+            //     }
+            //     Ok(())
+            // });
+
+            // tokio_runtime.block_on(future).unwrap();
         });
 
         Response {
