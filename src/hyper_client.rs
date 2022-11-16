@@ -35,7 +35,7 @@ impl Client {
 pub struct Response {
     pub status: StatusCode,
     buf: Vec<u8>,
-    rx: futures::channel::mpsc::UnboundedReceiver<hyper::body::Bytes>,
+    rx: futures::channel::mpsc::Receiver<hyper::body::Bytes>,
     #[allow(dead_code)]
     handle: std::thread::JoinHandle<()>,
 }
@@ -43,7 +43,7 @@ pub struct Response {
 impl Response {
     pub fn new(mut res: http::Response<hyper::Body>) -> Response {
         let status = res.status();
-        let (tx, rx) = futures::channel::mpsc::unbounded();
+        let (mut tx, rx) = futures::channel::mpsc::channel(1);
 
         let handle = std::thread::spawn(move || {
             let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
@@ -53,7 +53,7 @@ impl Response {
 
             let future = res.body_mut().try_for_each(move |chunk| {
                 if !tx.is_closed() {
-                    tx.unbounded_send(chunk).unwrap();
+                    let _ = tx.try_send(chunk);
                 }
                 futures::future::ok(())
             });
